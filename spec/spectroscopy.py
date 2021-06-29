@@ -16,7 +16,7 @@ class Spectroscopy(object):
     def absorption(self, e_min, e_max, de, rho_0, t_final, dt,
                    dipole_file='dipole_dipole.dat',
                    is_damped=True, lineshape_func = False):
-
+        # dipole_file will be used to save dipole-dipole TCF
         utils.print_banner("CALCULATING LINEAR ABSORPTION SPECTRUM")
 
         energies = np.arange(e_min, e_max, de)
@@ -81,12 +81,17 @@ class Spectroscopy(object):
                 omega_diff = self.dynamics.ham.omega_diff
                 nbath = self.dynamics.ham.nbath
                 nsite = self.dynamics.ham.nsite
+                # system Hamiltonian in eigen basis
                 sys_eig = self.dynamics.ham.site2eig(self.dynamics.ham.sys)
+                # system-bath Hamiltonian, system part in eigen basis
                 sysbath_eig = []
                 for n in range(nbath):
                     sysbath_eig.append(self.dynamics.ham.site2eig(self.dynamics.ham.sysbath[n]))                
+                # dipole operator in system eigen basis
                 mu_eig = self.dynamics.ham.site2eig(mu) 
+                # equivalent to write np.asarray(np.diag(sys_eig) == 0.).nonzero()[0][0]
                 gs_index = np.where(np.diag(sys_eig) == 0.)[0][0]
+                # what is this???
                 markov_rate = []
                 for l in range(nbath):
                     markovrate_l = np.zeros((nsite,nsite))
@@ -193,9 +198,9 @@ class Spectroscopy(object):
         utils.print_banner("CALCULATING TWO-DIMENSIONAL SPECTRUM")
         
         if lioupath == 'total':
-            print '--- Including all Liouville pathways.'
+            print('--- Including all Liouville pathways.')
         else:
-            print '--- Including only selected Liouville pathways.'
+            print('--- Including only selected Liouville pathways.')
 
         energy1s = np.arange(e1_min, e1_max, de1)
         energy3s = np.arange(e3_min, e3_max, de3)
@@ -208,9 +213,9 @@ class Spectroscopy(object):
 
         spectrum = np.zeros( (len(omega3s),len(time2s),len(omega1s)) )
 
-        print "--- Spectrum will require O(%d) propagations."%(len(times)*len(time2s))
+        print("--- Spectrum will require O(%d) propagations."%(len(times)*len(time2s)))
 
-        print "--- Calculating third-order response function ...",
+        print("--- Calculating third-order response function ...", end = " ")
 
 
         try:
@@ -227,9 +232,9 @@ class Spectroscopy(object):
     #   for n in range(1,len(times)-1):
     #       print Rsignal[0][0,0,n].real
 
-        print "done."
-        print "--- Performing 2D Fourier transform ...",
-
+        print("done.")
+        print("--- Performing 2D Fourier transform ...", end = " ")
+        # Eq. (16)
         expi1 = np.exp(1j*np.outer(omega1s,times))
         expi1[:,0] *= 0.5*dt 
         expi1[:,1:] *= dt 
@@ -255,7 +260,7 @@ class Spectroscopy(object):
 #                            #np.exp(1j*(omega1*time1+omega3*time3))*Rsignal[1][t3,t2,t1]
 #                            #+np.exp(1j*(-omega1*time1+omega3*time3))*Rsignal[0][t3,t2,t1] ).real
 
-        print "done."
+        print("done.")
 
         spectra = []
         for t2 in range(len(time2s)):
@@ -264,7 +269,7 @@ class Spectroscopy(object):
         return energy1s, energy3s, time2s, spectra, times, Rsignal
 
     def calculate_R3(self, rho_g, time2_min, time2_max, dt2, time_final, dt, lioupath='Total', is_damped=True, lineshape_func=False):
-        
+    # Eq. (10-15), FIG. 1.    
         time2s = np.arange(time2_min, time2_max, dt2)
         times = np.arange(0.0, time_final, dt)
         dt2_over_dt = int(dt2/dt)
@@ -411,6 +416,7 @@ class Spectroscopy(object):
             mu_ops = [mu_rp, mu_nr]
 
             try:
+                # RDM as rho_g, ADMs as zero
                 rho_g_bath = self.dynamics.initialize_from_rdm(rho_g)
             except AttributeError:
                 rho_g_bath = rho_g.copy()
@@ -423,6 +429,7 @@ class Spectroscopy(object):
            # self.dynamics.precompute_redfield_tensor(0.0,3*time_final+2*time2_max+dt+1e-3,dt)
             for ph in [0,1]:
                 for mu_op in mu_ops[ph]:
+                    # note that rho_g_bath includes RDM and ADMs matrices
                     rho_0 = self.act(mu_op[0],rho_g_bath)
                     time1s, rhos_t1 = self.dynamics.propagate_full(
                                         rho_0, 0.0, time_final, dt)

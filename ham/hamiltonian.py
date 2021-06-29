@@ -91,6 +91,7 @@ class Hamiltonian(HamiltonianSystem):
         self.init_system(ham_sys, is_verbose)
 
         self.sample_wigner = sample_wigner
+        self.ham_sys = ham_sys
         self.sysbath = ham_sysbath
         self.spec_densities = spec_densities
         assert len(ham_sysbath) == len(spec_densities)

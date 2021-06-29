@@ -7,6 +7,8 @@ import itertools
 from pyrho.heom import iterhelper
 from pyrho.integrate import Integrator
 from pyrho.lib import const, utils
+from scipy.linalg import expm
+# from pyrho import ham
 
 from pyrho.unitary import Unitary
 class HEOM(Unitary):
@@ -39,6 +41,7 @@ class HEOM(Unitary):
     """
 
     def __init__(self, hamiltonian, L=1, K=0,
+    			 picture='None',
                  K_truncation='Ishizaki-Tanimura', L_truncation='TNL'):
         """Initialize the HEOM class.
 
@@ -62,6 +65,7 @@ class HEOM(Unitary):
                            "THE HIERARCHICAL EQUATIONS OF MOTION")
  
         self.ham = hamiltonian
+        self.picture = picture
         self.Lmax = L
         self.Kmax = K
         self.Nk = K+1
@@ -397,7 +401,16 @@ class HEOM(Unitary):
 #        else:
 #            return np.zeros((self.ham.nsite,self.ham.nsite))
 
+    def to_interaction(self, ham_sys, op_site, time):
+        exp_iHt = expm(1j*ham_sys*time)
+        return utils.matrix_dot(exp_iHt, op_site, exp_iHt.conj())
+    
+    def from_interaction(self, ham_sys, op_int, time):
+        exp_iHt = expm(1j*ham_sys*time)
+        return utils.matrix_dot(exp_iHt.conj(), op_int, exp_iHt)
+
     def heom_deriv(self, t, rho):
+    	# HEOM differential equation
         hbar = const.hbar
         drho = list() 
         if self.ham.sd[0].sd_type == 'ohmic-lorentz':
@@ -406,10 +419,16 @@ class HEOM(Unitary):
             for n, nmat in enumerate(self.nmats): 
                 L = np.sum(nmat)
                 rho_n = rho[n]
-                drho_n = -1j/hbar * utils.commutator(self.ham.sys,rho_n)
-                drho_n -= np.sum(nmat*self.gamma)*rho_n
+                if self.picture == 'schroedinger':
+	                drho_n = -1j/hbar * utils.commutator(self.ham.sys,rho_n) # first line of Eq. (15)
+                elif self.picture == 'interaction':
+                	drho_n = 0
+                drho_n -= np.sum(nmat*self.gamma)*rho_n # first line of Eq. (15)
                 for j in range(self.ham.nbath):
-                    Fj = self.ham.sysbath[j]    # this is like |j><j|
+                    if self.picture == 'schroedinger':
+                        Fj = self.ham.sysbath[j]    # this is like |j><j|
+                    elif self.picture == 'interaction':
+                        Fj = self.to_interaction(self.ham.ham_sys, self.ham.sysbath[j], t)
                     lamdaj = self.ham.sd[j].lamda
                     omega_cj = self.ham.sd[j].omega_c
                     if self.K_truncation == 'Ishizaki-Tanimura':
@@ -455,12 +474,19 @@ class HEOM(Unitary):
                 amat = nabmat[:,self.Nk:self.Nk+self.nlorentz]
                 bmat = nabmat[:,self.Nk+self.nlorentz:self.Nk+2*self.nlorentz]
                 rho_nab = rho[nab]
-                drho_nab = -1j/hbar * utils.commutator(self.ham.sys,rho_nab)
+                if self.picture == 'schroedinger':
+	                drho_nab = -1j/hbar * utils.commutator(self.ham.sys,rho_nab) # first line of Eq. (15)
+                elif self.picture == 'interaction':
+                	drho_nab = 0
                 drho_nab -=    np.sum((amat+bmat)*self.Gamma)*rho_nab
                 drho_nab -= 1j*np.sum((amat-bmat)*self.Omega)*rho_nab
                 drho_nab -= np.sum(nmat*self.gamma)*rho_nab
                 for j in range(self.ham.nbath):
-                    Fj = self.ham.sysbath[j]    # this is like |j><j|
+                    if self.picture == 'schroedinger':
+                        Fj = self.ham.sysbath[j]    # this is like |j><j|
+                    elif self.picture == 'interaction':
+                        Fj = self.to_interaction(self.ham.ham_sys, self.ham.sysbath[j], t)
+                    # Fj = self.ham.sysbath[j]    # this is like |j><j|
                     # lamdaj = self.ham.sd[j].lamda
                     # omega_cj = self.ham.sd[j].omega_c
                     #if self.truncation_type == 'Ishizaki-Tanimura':
@@ -508,19 +534,34 @@ class HEOM(Unitary):
             op_rho_hierarchy.append(np.dot(ado, op_sys))
         return np.array(op_rho_hierarchy)
 
-    def propagate_full(self, rho_hierarchy, t_init, t_final, dt):
-        integrator = Integrator('ODE', dt, deriv_fn=self.heom_deriv)
+    def rhos_int2site(self, ham_sys, rhos_int, times):
+    	# ham_sys = self.ham.ham_sys
+        rhos_site = list()
+        # print(times[0])
+        for t, time in enumerate(times):
+            rhos_site.append(self.from_interaction(ham_sys, rhos_int[t], time))
+        return rhos_site
+
+    def propagate_full(self, rho_hierarchy, t_init, t_final, dt, picture):
+        integrator = Integrator('ODE', dt, deriv_fn=self.heom_deriv) # dy/dt = deriv_fn(t,y)
         integrator.set_initial_value(rho_hierarchy, t_init)
-
-        rhos_site = list() 
         times = np.arange(t_init, t_final, dt)
-        for time in times:
-            rhos_site.append(integrator.y.copy())
-            integrator.integrate()
-            # TODO(TCB): If filtering, check if we can remove any ADMs
+        if picture == 'schroedinger':
+ 	        rhos_site = list() 
+ 	        
+ 	        for time in times:
+ 	            rhos_site.append(integrator.y.copy())
+ 	            integrator.integrate()
+ 	            # TODO(TCB): If filtering, check if we can remove any ADMs
+         	return times, np.array(rhos_site)
+        elif picture == 'interaction':
+            rhos_int = list()
+            for time in times:
+                rhos_int.append(integrator.y.copy())
+                integrator.integrate()
+            return times, np.array(rhos_int)
 
-        return times, np.array(rhos_site)
-
+	    		
     def propagate(self, rho_0, t_init, t_final, dt):
         """Propagate the RDM according to HEOM dynamics.
 
@@ -544,7 +585,14 @@ class HEOM(Unitary):
 
         """
         #self.write_bath_corr_fn(times)
-        rho_hierarchy = self.initialize_from_rdm(rho_0)
-        times, rhos_hierarchy = self.propagate_full(rho_hierarchy, t_init, t_final, dt)
-        rhos_site = self.reduce_to_rdm(rhos_hierarchy)
-        return times, rhos_site
+        rho_hierarchy = self.initialize_from_rdm(rho_0) # site basis
+        times, rhos_hierarchy = self.propagate_full(rho_hierarchy, t_init, t_final, dt, self.picture) # propagate in different pictures
+        rhos_rdm = self.reduce_to_rdm(rhos_hierarchy)
+        if self.picture == 'schroedinger':
+        	rhos_site = rhos_rdm
+        	return times, rhos_site
+
+        elif self.picture == 'interaction':
+        	rhos_int = rhos_rdm
+        	rhos_site = self.rhos_int2site(self.ham.ham_sys, rhos_int, times)
+        	return times, rhos_site, rhos_int
